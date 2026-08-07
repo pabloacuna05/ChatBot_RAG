@@ -220,3 +220,6 @@ __marimo__/
 
 # Chatbot Rutas
 historial.json
+
+# ChatBot_RAG: indice vectorial generado automaticamente a partir de los PDFs
+rag_index/
