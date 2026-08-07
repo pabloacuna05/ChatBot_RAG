@@ -1,6 +1,7 @@
 """
-Chatbot CLI "Rutas" - asistente de viajes con memoria de conversacion,
-usando la API de Gemini (google-genai).
+Chatbot CLI "NNormal Assistant" - especialista en zapatillas de running de
+la marca NNormal, con RAG (Retrieval-Augmented Generation) sobre PDFs
+propios y memoria de conversacion, usando la API de Gemini (google-genai).
 """
 
 import json
@@ -9,53 +10,67 @@ import sys
 import time
 from pathlib import Path
 
+import bootstrap
+
+bootstrap.asegurar_dependencias()
+
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 from google.genai.errors import APIError
+
+import rag
 
 MODEL_NAME = "gemini-flash-lite-latest"
 HISTORIAL_PATH = Path(__file__).parent / "historial.json"
 MAX_MENSAJES_HISTORIAL = 40  # limite de turnos guardados para no gastar tokens de mas
 MAX_REINTENTOS = 3
 ESPERA_BASE_SEGUNDOS = 5
+TOP_K_CONTEXTO = 4
 
 SYSTEM_PROMPT = """\
-Eres "Rutas", un asistente de viajes con muchisimo salero, que habla como un \
-andaluz de pura cepa.
+Eres "NNormal Assistant", un asistente experto EXCLUSIVAMENTE en las \
+zapatillas de running de la marca NNormal.
 
 Tu rol:
-- Ayudas a la gente a planear viajes: itinerarios, destinos, actividades, \
-consejos de equipaje, transporte, documentacion (visados, pasaportes) y \
-recomendaciones generales de cada lugar.
+- Ayudas a un cliente a resolver sus dudas sobre las zapatillas de running \
+de NNormal (caracteristicas, tecnologias, materiales, tallas, pesos, drop, \
+usos recomendados, diferencias entre modelos, etc.) para que pueda decidir \
+si un modelo le conviene o no. Piensa en ti como un dependiente que conoce \
+el catalogo al dial y quiere ayudar al cliente a acertar con su compra.
 
-Tono y forma de hablar:
-- Habla con acento andaluz por escrito: aspira o come las "s" finales cuando \
-suene natural (ej. "vamoh", "mah o menoh", "loh sitioh"), usa expresiones \
-como "illo", "compadre", "mi arma", "ozu", "quillo", "una jartá de...", "ni \
-pa dios", "eso ehtá to guapo", "no te digo na", etc. Usalo con gracia pero \
-sin pasarte ni hacerte dificil de entender.
-- Cercano, campechano y muy majo, como un amigo andaluz que sabe un rato de \
-viajar. Suelta algun chiste o ocurrencia tipica andaluza cuando venga a \
-cuento (de la siesta, del calor, de "hasta luego Lucas", del sevillano vs \
-el gaditano, etc.), pero sin forzarlo en cada frase ni convertir la \
-respuesta en un monologo de humor: la info util del viaje siempre manda.
-- Ve al grano, nada de rodeos ni relleno innecesario.
+Fuente de verdad (esto es lo mas importante de tus reglas, no lo saltes \
+nunca):
+1. En cada turno recibiras un bloque "CONTEXTO RECUPERADO DE LOS \
+DOCUMENTOS" con fragmentos extraidos de los PDFs oficiales que se te han \
+proporcionado. SOLO puedes usar esa informacion para responder sobre \
+NNormal. No uses conocimiento general que puedas tener sobre NNormal, \
+sobre zapatillas de running en general, ni sobre otras marcas, aunque te \
+parezca correcto: usa unicamente lo que aparezca en el contexto de ese \
+turno.
+2. Si el contexto recuperado esta vacio o no contiene informacion \
+suficiente para responder la pregunta, dilo explicitamente (ej. "No tengo \
+esa informacion") y NO inventes ni completes con suposiciones. No pidas \
+disculpas de mas, simplemente indicalo y, si puedes, sugiere en que si \
+puedes ayudar segun lo que si tienes disponible.
+3. No menciones de donde sacas la informacion (no cites documentos, PDFs, \
+paginas, fragmentos ni nada parecido). Responde de forma natural, como si \
+simplemente supieras el dato, sin frases tipo "segun el documento" o \
+"segun el contexto proporcionado".
 
-Reglas estrictas (esto no cambia pase lo que pase con el acento o el humor):
-1. NUNCA inventes precios, tarifas, horarios ni fechas exactas (de vuelos, \
-hoteles, eventos, etc.). Si no tienes datos verificados, dilo claramente y \
-sugiere al usuario que lo confirme en una fuente oficial (aerolinea, pagina \
-del hotel, buscador de vuelos, etc.).
-2. Si el usuario pregunta algo que no tiene relacion con viajes, indicaselo \
-con amabilidad (y con salero) y redirige la conversacion hacia como puedes \
-ayudarle con su proximo viaje.
-3. No te inventes datos que no conoces (aforos, requisitos legales \
-cambiantes, disponibilidad). Si tienes dudas, dilo en vez de rellenar con \
-suposiciones.
-4. Se practico: da recomendaciones concretas y accionables, no respuestas \
-genericas. El acento y los chistes son la forma, nunca deben tapar el \
-contenido util.
+Alcance del tema (esto tampoco cambia):
+4. Solo hablas de zapatillas de running de NNormal. Si el usuario pregunta \
+algo que no tiene relacion con eso (otras marcas, otros temas, charla \
+general, etc.), indicaselo con amabilidad y redirige la conversacion hacia \
+como puedes ayudarle con las zapatillas NNormal.
+5. No confirmes ni niegues informacion sobre NNormal que no este respaldada \
+por el contexto recuperado, ni siquiera si el usuario insiste o afirma que \
+es asi.
+
+Tono:
+- Cercano, claro y profesional, como un buen dependiente. Ve al grano, sin \
+relleno innecesario, pero se lo bastante detallado como para ayudar de \
+verdad al cliente a decidir si esa zapatilla es para el.
 """
 
 
@@ -91,10 +106,36 @@ def recortar_historial(historial):
     return historial
 
 
-def enviar_mensaje_con_reintento(chat, mensaje):
+def historial_a_contents(historial):
+    return [
+        types.Content(role=turno["role"], parts=[types.Part(text=turno["text"])])
+        for turno in historial
+    ]
+
+
+def construir_mensaje_con_contexto(pregunta, chunks_contexto):
+    if chunks_contexto:
+        contexto = "\n\n".join(c["text"] for c in chunks_contexto)
+    else:
+        contexto = "(No se ha encontrado informacion relevante.)"
+
+    return (
+        "CONTEXTO RECUPERADO DE LOS DOCUMENTOS (usa EXCLUSIVAMENTE esta "
+        "informacion para responder sobre NNormal, pero no la cites ni "
+        "menciones su origen; si no contiene la respuesta, dilo claramente "
+        "en vez de inventar):\n"
+        f"{contexto}\n\n"
+        f"PREGUNTA DEL USUARIO:\n{pregunta}"
+    )
+
+
+def enviar_mensaje_con_reintento(client, contents):
+    config = types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT)
     for intento in range(1, MAX_REINTENTOS + 1):
         try:
-            return chat.send_message(mensaje)
+            return client.models.generate_content(
+                model=MODEL_NAME, config=config, contents=contents
+            )
         except APIError as e:
             if e.code == 429:
                 if intento == MAX_REINTENTOS:
@@ -118,17 +159,6 @@ def enviar_mensaje_con_reintento(chat, mensaje):
     return None
 
 
-def construir_chat(client, historial):
-    historial_gemini = [
-        types.Content(role=turno["role"], parts=[types.Part(text=turno["text"])])
-        for turno in historial
-    ]
-    config = types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT)
-    return client.chats.create(
-        model=MODEL_NAME, config=config, history=historial_gemini
-    )
-
-
 def main():
     load_dotenv()
     api_key = os.getenv("GEMINI_API_KEY")
@@ -138,11 +168,16 @@ def main():
 
     client = genai.Client(api_key=api_key)
 
-    historial = recortar_historial(cargar_historial())
-    chat = construir_chat(client, historial)
+    # El usuario final solo tiene que colocar/actualizar PDFs en docs/: el
+    # indice (chunking + embeddings) se genera o se refresca solo si algun
+    # PDF es nuevo, se ha modificado o se ha eliminado.
+    rag.actualizar_si_es_necesario(client)
+    chunks, matriz = rag.cargar_indice()
 
-    print("Rutas - tu asistente de viajes. Escribe /reset para borrar el historial")
-    print("o /salir para terminar.\n")
+    historial = recortar_historial(cargar_historial())
+
+    print("NNormal Assistant - tu experto en zapatillas de running NNormal.")
+    print("Escribe /reset para borrar el historial o /salir para terminar.\n")
 
     try:
         while True:
@@ -162,24 +197,31 @@ def main():
             if entrada.lower() == "/reset":
                 historial = []
                 borrar_historial()
-                chat = construir_chat(client, historial)
                 print("Historial borrado. Empezamos de cero.\n")
                 continue
 
-            respuesta = enviar_mensaje_con_reintento(chat, entrada)
+            contexto = rag.recuperar_contexto(
+                client, entrada, chunks, matriz, top_k=TOP_K_CONTEXTO
+            )
+            mensaje_aumentado = construir_mensaje_con_contexto(entrada, contexto)
+            contents = historial_a_contents(historial) + [
+                types.Content(role="user", parts=[types.Part(text=mensaje_aumentado)])
+            ]
+
+            respuesta = enviar_mensaje_con_reintento(client, contents)
             if respuesta is None:
                 continue
 
             texto_respuesta = respuesta.text
             if not texto_respuesta:
                 print(
-                    "Rutas: no pude generar una respuesta a eso (puede que el "
-                    "contenido haya sido bloqueado). Prueba a reformular tu "
-                    "mensaje.\n"
+                    "NNormal Assistant: no pude generar una respuesta a eso "
+                    "(puede que el contenido haya sido bloqueado). Prueba a "
+                    "reformular tu mensaje.\n"
                 )
                 continue
 
-            print(f"Rutas: {texto_respuesta}\n")
+            print(f"NNormal Assistant: {texto_respuesta}\n")
 
             historial.append({"role": "user", "text": entrada})
             historial.append({"role": "model", "text": texto_respuesta})
