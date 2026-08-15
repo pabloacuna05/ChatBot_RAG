@@ -115,8 +115,8 @@ def actualizar_si_es_necesario(client, docs_dir=DOCS_DIR, index_dir=INDEX_DIR):
         print(f"Indice actualizado: {num_chunks} fragmentos de {len(pdfs)} PDF(s).\n")
     else:
         print(
-            "No hay ningun PDF en la carpeta docs/ todavia. Añade el PDF de "
-            "NNormal ahi y vuelve a arrancar el chatbot.\n"
+            "No hay ningun PDF en la carpeta docs/ todavia. Añade tus PDFs "
+            "ahi y vuelve a arrancar el chatbot.\n"
         )
     return True, num_chunks
 

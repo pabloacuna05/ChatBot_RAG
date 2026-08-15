@@ -1,7 +1,9 @@
 """
-Chatbot CLI "NNormal Assistant" - especialista en zapatillas de running de
-la marca NNormal, con RAG (Retrieval-Augmented Generation) sobre PDFs
-propios y memoria de conversacion, usando la API de Gemini (google-genai).
+Plantilla de chatbot CLI con RAG (Retrieval-Augmented Generation): responde
+solo con informacion de los PDFs que el usuario coloque en docs/, con
+memoria de conversacion, usando la API de Gemini (google-genai). El nombre
+y el tema del asistente se configuran con las variables BOT_NAME y
+BOT_TOPIC del archivo .env.
 """
 
 import json
@@ -28,26 +30,25 @@ MAX_REINTENTOS = 3
 ESPERA_BASE_SEGUNDOS = 5
 TOP_K_CONTEXTO = 4
 
-SYSTEM_PROMPT = """\
-Eres "NNormal Assistant", un asistente experto EXCLUSIVAMENTE en las \
-zapatillas de running de la marca NNormal.
+BOT_NAME_POR_DEFECTO = "Asistente RAG"
+BOT_TOPIC_POR_DEFECTO = "la informacion de los documentos proporcionados"
+
+SYSTEM_PROMPT_TEMPLATE = """\
+Eres "{bot_name}", un asistente experto EXCLUSIVAMENTE en {topic}.
 
 Tu rol:
-- Ayudas a un cliente a resolver sus dudas sobre las zapatillas de running \
-de NNormal (caracteristicas, tecnologias, materiales, tallas, pesos, drop, \
-usos recomendados, diferencias entre modelos, etc.) para que pueda decidir \
-si un modelo le conviene o no. Piensa en ti como un dependiente que conoce \
-el catalogo al dial y quiere ayudar al cliente a acertar con su compra.
+- Ayudas al usuario a resolver sus dudas sobre {topic}, usando la \
+informacion disponible para que pueda entender el tema o tomar una \
+decision informada. Piensa en ti como alguien que conoce el material a \
+fondo y quiere ayudar de verdad.
 
 Fuente de verdad (esto es lo mas importante de tus reglas, no lo saltes \
 nunca):
 1. En cada turno recibiras un bloque "CONTEXTO RECUPERADO DE LOS \
-DOCUMENTOS" con fragmentos extraidos de los PDFs oficiales que se te han \
-proporcionado. SOLO puedes usar esa informacion para responder sobre \
-NNormal. No uses conocimiento general que puedas tener sobre NNormal, \
-sobre zapatillas de running en general, ni sobre otras marcas, aunque te \
-parezca correcto: usa unicamente lo que aparezca en el contexto de ese \
-turno.
+DOCUMENTOS" con fragmentos extraidos de los PDFs que se te han \
+proporcionado. SOLO puedes usar esa informacion para responder. No uses \
+conocimiento general que puedas tener sobre el tema, aunque te parezca \
+correcto: usa unicamente lo que aparezca en el contexto de ese turno.
 2. Si el contexto recuperado esta vacio o no contiene informacion \
 suficiente para responder la pregunta, dilo explicitamente (ej. "No tengo \
 esa informacion") y NO inventes ni completes con suposiciones. No pidas \
@@ -59,18 +60,16 @@ simplemente supieras el dato, sin frases tipo "segun el documento" o \
 "segun el contexto proporcionado".
 
 Alcance del tema (esto tampoco cambia):
-4. Solo hablas de zapatillas de running de NNormal. Si el usuario pregunta \
-algo que no tiene relacion con eso (otras marcas, otros temas, charla \
-general, etc.), indicaselo con amabilidad y redirige la conversacion hacia \
-como puedes ayudarle con las zapatillas NNormal.
-5. No confirmes ni niegues informacion sobre NNormal que no este respaldada \
-por el contexto recuperado, ni siquiera si el usuario insiste o afirma que \
-es asi.
+4. Solo hablas de {topic}. Si el usuario pregunta algo que no tiene \
+relacion con eso (otros temas, charla general, etc.), indicaselo con \
+amabilidad y redirige la conversacion hacia como puedes ayudarle con {topic}.
+5. No confirmes ni niegues informacion sobre {topic} que no este \
+respaldada por el contexto recuperado, ni siquiera si el usuario insiste o \
+afirma que es asi.
 
 Tono:
-- Cercano, claro y profesional, como un buen dependiente. Ve al grano, sin \
-relleno innecesario, pero se lo bastante detallado como para ayudar de \
-verdad al cliente a decidir si esa zapatilla es para el.
+- Cercano, claro y profesional. Ve al grano, sin relleno innecesario, pero \
+se lo bastante detallado como para ayudar de verdad al usuario.
 """
 
 
@@ -129,8 +128,8 @@ def construir_mensaje_con_contexto(pregunta, chunks_contexto):
     )
 
 
-def enviar_mensaje_con_reintento(client, contents):
-    config = types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT)
+def enviar_mensaje_con_reintento(client, contents, system_prompt):
+    config = types.GenerateContentConfig(system_instruction=system_prompt)
     for intento in range(1, MAX_REINTENTOS + 1):
         try:
             return client.models.generate_content(
@@ -168,6 +167,10 @@ def main():
 
     client = genai.Client(api_key=api_key)
 
+    bot_name = os.getenv("BOT_NAME", "").strip() or BOT_NAME_POR_DEFECTO
+    bot_topic = os.getenv("BOT_TOPIC", "").strip() or BOT_TOPIC_POR_DEFECTO
+    system_prompt = SYSTEM_PROMPT_TEMPLATE.format(bot_name=bot_name, topic=bot_topic)
+
     # El usuario final solo tiene que colocar/actualizar PDFs en docs/: el
     # indice (chunking + embeddings) se genera o se refresca solo si algun
     # PDF es nuevo, se ha modificado o se ha eliminado.
@@ -176,7 +179,7 @@ def main():
 
     historial = recortar_historial(cargar_historial())
 
-    print("NNormal Assistant - tu experto en zapatillas de running NNormal.")
+    print(f"{bot_name} - pregunta lo que quieras sobre {bot_topic}.")
     print("Escribe /reset para borrar el historial o /salir para terminar.\n")
 
     try:
@@ -208,20 +211,20 @@ def main():
                 types.Content(role="user", parts=[types.Part(text=mensaje_aumentado)])
             ]
 
-            respuesta = enviar_mensaje_con_reintento(client, contents)
+            respuesta = enviar_mensaje_con_reintento(client, contents, system_prompt)
             if respuesta is None:
                 continue
 
             texto_respuesta = respuesta.text
             if not texto_respuesta:
                 print(
-                    "NNormal Assistant: no pude generar una respuesta a eso "
+                    f"{bot_name}: no pude generar una respuesta a eso "
                     "(puede que el contenido haya sido bloqueado). Prueba a "
                     "reformular tu mensaje.\n"
                 )
                 continue
 
-            print(f"NNormal Assistant: {texto_respuesta}\n")
+            print(f"{bot_name}: {texto_respuesta}\n")
 
             historial.append({"role": "user", "text": entrada})
             historial.append({"role": "model", "text": texto_respuesta})
