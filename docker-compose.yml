@@ -1,0 +1,23 @@
+services:
+  chatbot:
+    build: .
+    image: chatbot-rag
+    # El chat es interactivo: sin estas dos, input() ve EOF y el bot se
+    # cierra nada mas arrancar.
+    stdin_open: true
+    tty: true
+    env_file:
+      - .env
+    environment:
+      # Redundante con el Dockerfile, pero deja explicito que aqui las
+      # dependencias las pone la imagen, no bootstrap.py.
+      RAG_SIN_BOOTSTRAP: "1"
+    volumes:
+      # Tus documentos, en solo lectura: el contenedor no tiene por que
+      # poder modificarlos.
+      - ./docs:/app/docs:ro
+      # El indice persiste entre ejecuciones para no repetir los embeddings.
+      - rag_index:/app/rag_index
+
+volumes:
+  rag_index:

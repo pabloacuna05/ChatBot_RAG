@@ -1,4 +1,24 @@
-google-genai>=1.0.0
-python-dotenv>=1.0.0
-pypdf>=4.0.0
-numpy>=1.24.0
+# Versiones fijadas a las que estan instaladas y funcionando, para que un
+# despliegue no se rompa por una actualizacion de una dependencia.
+# Para probar en local basta con dejar que bootstrap.py las instale solo.
+google-genai==2.17.0
+python-dotenv==1.2.2
+pypdf==6.15.0
+numpy==2.5.1
+
+# --- Opcionales -------------------------------------------------------
+# No hacen falta para el funcionamiento normal; cada una habilita una
+# funcion concreta que viene desactivada por defecto.
+#
+# Indice vectorial aproximado (rag.BACKEND_VECTORIAL = "hnsw"), util a
+# partir de decenas de miles de fragmentos:
+#   hnswlib==0.8.0
+#
+# Reranker de Cohere (rag.RERANKER_BACKEND = "cohere"), requiere ademas
+# COHERE_API_KEY en el .env:
+#   cohere==5.13.6
+#
+# OCR de PDFs escaneados (rag.USAR_OCR = True). Necesita ademas Tesseract y
+# Poppler instalados en el sistema, no solo estos paquetes:
+#   pytesseract==0.3.13
+#   pdf2image==1.17.0

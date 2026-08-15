@@ -1,0 +1,21 @@
+.git
+.gitignore
+__pycache__
+*.py[cod]
+.venv
+venv
+env
+
+# Nunca dentro de la imagen: las variables se inyectan con env_file.
+.env
+
+# Se montan como volumenes, no se copian.
+docs
+rag_index
+historial.json
+
+# No aportan nada en produccion.
+test_*.py
+eval
+*.csv
+README.md

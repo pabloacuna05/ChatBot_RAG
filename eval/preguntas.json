@@ -1,0 +1,28 @@
+[
+  {
+    "id": "ejemplo-dato-concreto",
+    "tipo": "positivo",
+    "pregunta": "¿Cuanto pesa el modelo Kjerag?",
+    "esperado": "215 g",
+    "documento": "catalogo.pdf",
+    "pagina": 4,
+    "nota": "Sustituye estos casos por los tuyos. 'esperado' es un fragmento literal que DEBE aparecer en alguno de los chunks recuperados; 'documento' y 'pagina' son opcionales y, si estan, tambien tienen que coincidir."
+  },
+  {
+    "id": "ejemplo-comparativa",
+    "tipo": "positivo",
+    "pregunta": "¿Que diferencia hay entre la Kjerag y la Tomir?",
+    "esperado": "drop"
+  },
+  {
+    "id": "ejemplo-fuera-de-corpus",
+    "tipo": "negativo",
+    "pregunta": "¿Cuanto cuesta un billete de avion a Tokio?",
+    "nota": "Los casos negativos no llevan 'esperado': se espera que el bot reconozca que no tiene la informacion en vez de inventarsela."
+  },
+  {
+    "id": "ejemplo-otra-marca",
+    "tipo": "negativo",
+    "pregunta": "¿Es mejor la Nike Vaporfly que vuestros modelos?"
+  }
+]

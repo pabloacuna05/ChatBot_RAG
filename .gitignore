@@ -223,3 +223,10 @@ historial.json
 
 # ChatBot_RAG: indice vectorial generado automaticamente a partir de los PDFs
 rag_index/
+
+# ChatBot_RAG: colecciones de la API (documentos subidos, indices y la base
+# de historiales por sesion)
+data/
+
+# Resultados de evaluar.py
+eval/*.csv
