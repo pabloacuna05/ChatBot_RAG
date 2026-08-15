@@ -244,6 +244,21 @@ class TestCabecerasYSalud(BaseAPI):
     def test_cors_nunca_es_comodin(self):
         self.assertNotIn("*", self.api.ORIGENES_CORS)
 
+    def test_la_documentacion_no_queda_bloqueada_por_su_propia_csp(self):
+        """Swagger carga su JS de un CDN: con la CSP estricta de la API se
+        veria en blanco pero devolviendo 200, un fallo mudo."""
+        respuesta = self.cliente.get("/docs")
+        self.assertEqual(respuesta.status_code, 200)
+        csp = respuesta.headers["Content-Security-Policy"]
+        self.assertIn("cdn.jsdelivr.net", csp)
+        self.assertIn("frame-ancestors 'none'", csp, "sigue sin poder embeberse")
+
+    def test_los_endpoints_de_datos_mantienen_la_csp_estricta(self):
+        """La excepcion es solo para la documentacion."""
+        for ruta in ("/salud", "/colecciones"):
+            csp = self.cliente.get(ruta).headers["Content-Security-Policy"]
+            self.assertEqual(csp, self.api.CSP_API, f"{ruta} no deberia relajarla")
+
 
 class TestSubidaDeDocumentos(BaseAPI):
     def _subir(self, coleccion, nombre, contenido, tipo="application/octet-stream"):

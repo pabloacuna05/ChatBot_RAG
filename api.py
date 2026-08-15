@@ -172,11 +172,16 @@ async def ciclo_de_vida(app):
     _ejecutor.shutdown(wait=False)
 
 
+DOCS_HABILITADOS = conversacion.flag_env("DOCS_HABILITADOS", True)
+
 app = FastAPI(
     title="ChatBot RAG",
     description="Chatbot RAG multiusuario y multicoleccion.",
     version="1.1.0",
     lifespan=ciclo_de_vida,
+    docs_url="/docs" if DOCS_HABILITADOS else None,
+    redoc_url="/redoc" if DOCS_HABILITADOS else None,
+    openapi_url="/openapi.json" if DOCS_HABILITADOS else None,
 )
 
 if ORIGENES_CORS:
@@ -189,6 +194,24 @@ if ORIGENES_CORS:
     )
 
 
+# La documentacion interactiva (Swagger/ReDoc) carga su JS y su CSS de un
+# CDN, asi que con la CSP estricta de la API se veria en blanco. Se le
+# afloja la politica SOLO a esas rutas, y se pueden desactivar del todo
+# poniendo DOCS_HABILITADOS=false (recomendable en produccion: describen
+# toda la superficie de la API a cualquiera que la visite).
+RUTAS_DOCUMENTACION = {"/docs", "/redoc", "/docs/oauth2-redirect", "/openapi.json"}
+CSP_API = "default-src 'none'; frame-ancestors 'none'"
+CSP_DOCUMENTACION = (
+    "default-src 'none'; "
+    "script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; "
+    "style-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; "
+    "img-src 'self' https://fastapi.tiangolo.com data:; "
+    "font-src https://cdn.jsdelivr.net; "
+    "connect-src 'self'; "
+    "frame-ancestors 'none'"
+)
+
+
 @app.middleware("http")
 async def cabeceras_de_seguridad(request: Request, call_next):
     respuesta = await call_next(request)
@@ -196,9 +219,10 @@ async def cabeceras_de_seguridad(request: Request, call_next):
     respuesta.headers["X-Frame-Options"] = "DENY"
     respuesta.headers["Referrer-Policy"] = "no-referrer"
     respuesta.headers["Cache-Control"] = "no-store"
-    # La API solo devuelve JSON: no hay nada que ejecutar ni incrustar.
     respuesta.headers["Content-Security-Policy"] = (
-        "default-src 'none'; frame-ancestors 'none'"
+        CSP_DOCUMENTACION
+        if request.url.path in RUTAS_DOCUMENTACION
+        else CSP_API
     )
     if COOKIES_SEGURAS:
         respuesta.headers["Strict-Transport-Security"] = (

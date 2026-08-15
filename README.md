@@ -9,8 +9,10 @@ Sirve para cualquier documentacion propia — un catalogo de producto, un
 manual, unos apuntes de clase, normativa interna, un TFG... — sin tocar
 codigo: solo pones tu API key, tus documentos y el tema del que hablara.
 
-Requisitos: Python 3.9 o superior y una API key de Gemini (el nivel gratuito
-es suficiente para probarlo).
+Requisitos: **Python 3.12 o superior** y una API key de Gemini (el nivel
+gratuito es suficiente para probarlo). El minimo lo marca `numpy 2.5.1`, que
+es la version fijada en `requirements.txt`; si necesitas Python 3.10 u 11,
+baja numpy a la serie 2.1 y `google-genai` seguira funcionando.
 
 ## Probarlo en local
 
@@ -85,7 +87,7 @@ puede responder por bien que escriba.
 
 ## Desplegarlo
 
-Con Docker:
+Con Docker, la CLI:
 
 ```
 docker compose up --build
@@ -95,10 +97,21 @@ docker compose up --build
 repetir los embeddings en cada arranque. La imagen corre como usuario sin
 privilegios y desactiva `bootstrap.py` (las dependencias las fija la imagen).
 
-Como API HTTP multiusuario y multicoleccion:
+Y la API, que va en un perfil aparte para que `docker compose up` no la
+levante sin querer:
 
 ```
-pip install fastapi uvicorn python-multipart
+docker compose --profile api up --build
+```
+
+Solo publica el puerto en `127.0.0.1`: se espera un proxy inverso delante que
+termine TLS. Trae `mem_limit` y `cpus` puestos, que es la unica forma de
+acotar la memoria durante el parseo de un archivo malformado.
+
+Sin Docker:
+
+```
+pip install -r requirements.txt -r requirements-api.txt
 uvicorn api:app
 ```
 
@@ -121,7 +134,9 @@ Si se aceptara un id arbitrario, cualquiera podria leer la conversacion de
 otro sondeando identificadores. La sesion queda ligada a una coleccion al
 crearse y no puede cambiarla despues.
 
-Documentacion interactiva en `http://localhost:8000/docs`.
+Documentacion interactiva en `http://localhost:8000/docs`. Desactivala con
+`DOCS_HABILITADOS=false` en produccion: describe toda la superficie de la API
+a cualquiera que la visite.
 
 ### Antes de exponerlo a internet
 
@@ -146,6 +161,8 @@ Documentacion interactiva en `http://localhost:8000/docs`.
 - [ ] **Un solo worker**, o rate limiting externo. El limitador vive en
       memoria del proceso: con N workers los limites efectivos se multiplican
       por N. Para varios workers, ponlo en Redis o en el proxy.
+- [ ] **`DOCS_HABILITADOS=false`**, salvo que quieras publicar el catalogo
+      completo de endpoints y esquemas.
 - [ ] **Copia de seguridad de `data/`**, que contiene indices, documentos
       subidos e historiales.
 - [ ] **Revisa tus logs**: por defecto no guardan el texto de las preguntas
@@ -200,9 +217,13 @@ haber comprobado antes que puedes hacerlo.
   reconstruye entero.
 - `bootstrap.py` - instala dependencias que falten al arrancar en local; se
   desactiva solo dentro de un contenedor.
+- `requirements.txt` - versiones fijadas del nucleo, mas las opcionales
+  comentadas. `requirements-api.txt` añade lo que necesita el servidor.
+- `Dockerfile`, `docker-compose.yml` - imagen slim con usuario no root; la
+  API va en el perfil `api`.
 - `rag_index/`, `data/`, `historial.json` - generados automaticamente, no se
   suben a git.
-- `test_*.py` - 232 tests. `python -m unittest discover`. No gastan API.
+- `test_*.py` - 234 tests. `python -m unittest discover`. No gastan API.
 
 ## Personalizacion avanzada
 
