@@ -1,4 +1,5 @@
 services:
+  # Cliente de terminal. Para la API, usa el servicio "api" de abajo.
   chatbot:
     build: .
     image: chatbot-rag
@@ -19,5 +20,35 @@ services:
       # El indice persiste entre ejecuciones para no repetir los embeddings.
       - rag_index:/app/rag_index
 
+  api:
+    build: .
+    image: chatbot-rag
+    profiles: ["api"]        # docker compose --profile api up
+    command: ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000"]
+    env_file:
+      - .env
+    environment:
+      RAG_SIN_BOOTSTRAP: "1"
+    ports:
+      # Solo en localhost: se espera un proxy inverso delante que termine
+      # TLS. Exponerlo directo a internet dejaria la API en claro.
+      - "127.0.0.1:8000:8000"
+    volumes:
+      # Colecciones, indices e historiales de la API.
+      - datos_api:/app/data
+    # Techo de recursos. Los timeouts del codigo acotan el tiempo, pero un
+    # archivo malformado puede disparar la memoria durante el parseo y eso
+    # solo lo frena el runtime.
+    mem_limit: 2g
+    cpus: 1.5
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/salud')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
 volumes:
   rag_index:
+  datos_api:

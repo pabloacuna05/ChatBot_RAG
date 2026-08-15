@@ -99,25 +99,84 @@ Como API HTTP multiusuario y multicoleccion:
 
 ```
 pip install fastapi uvicorn python-multipart
-uvicorn api:app --reload
+uvicorn api:app
 ```
 
-| Metodo | Ruta | Que hace |
-|---|---|---|
-| `GET` | `/colecciones` | lista las colecciones y cuales estan en memoria |
-| `POST` | `/colecciones/{nombre}/documentos` | sube un documento |
-| `POST` | `/colecciones/{nombre}/reindexar` | reconstruye su indice |
-| `POST` | `/chat` | conversa (`mensaje`, `session_id`, `coleccion`) |
-| `DELETE` | `/sesiones/{session_id}` | borra el historial de una sesion |
-| `GET` | `/salud` | health check, sin autenticacion |
+| Metodo | Ruta | Quien | Que hace |
+|---|---|---|---|
+| `POST` | `/sesiones` | publico | abre sesion ligada a una coleccion, devuelve cookie |
+| `POST` | `/chat` | sesion | conversa (`mensaje`); la coleccion sale de la sesion |
+| `DELETE` | `/sesiones/actual` | sesion | cierra la sesion y borra su historial |
+| `GET` | `/colecciones` | admin | lista las colecciones |
+| `POST` | `/colecciones/{nombre}/documentos` | admin | sube un documento |
+| `POST` | `/colecciones/{nombre}/reindexar` | admin | reconstruye su indice |
+| `GET` | `/salud` | publico | health check |
 
-Cada coleccion es un corpus independiente en `data/{nombre}/`. El historial
-va por `session_id` en SQLite, y los indices se cargan de forma perezosa con
-una cache LRU, no uno por peticion. Protege la API poniendo `API_KEY` en el
-`.env`: los clientes la mandan en la cabecera `X-API-Key`. **Si la dejas
-vacia, la API acepta cualquier peticion**; vale para local, no para exponerla.
+Cada coleccion es un corpus independiente en `data/{nombre}/`. Los indices se
+cargan de forma perezosa con una cache LRU, no uno por peticion.
+
+**El cliente no elige su `session_id`.** El servidor lo genera (UUID4), lo
+firma con HMAC y lo entrega en una cookie `HttpOnly`/`Secure`/`SameSite=Lax`.
+Si se aceptara un id arbitrario, cualquiera podria leer la conversacion de
+otro sondeando identificadores. La sesion queda ligada a una coleccion al
+crearse y no puede cambiarla despues.
 
 Documentacion interactiva en `http://localhost:8000/docs`.
+
+### Antes de exponerlo a internet
+
+- [ ] **`SECRET_KEY`** puesta en el `.env`
+      (`python -c "import secrets; print(secrets.token_hex(32))"`). Sin ella
+      se usa una efimera: las sesiones caducan en cada reinicio y con varios
+      workers cada uno firmaria distinto.
+- [ ] **`API_KEY`** puesta, o los endpoints de administracion (subir
+      documentos, reindexar) quedan abiertos a cualquiera.
+- [ ] **HTTPS** delante. El codigo asume un proxy inverso (nginx, Caddy,
+      Traefik) que termina TLS; sin el, `COOKIES_SEGURAS=true` impide que la
+      cookie viaje y nada funcionara.
+- [ ] **`CONFIAR_EN_PROXY=true`** solo si ese proxy fija `X-Forwarded-For`.
+      Activarlo sin proxy permite falsear la cabecera y saltarse el limite
+      por IP.
+- [ ] **`ORIGENES_CORS`** con tus dominios reales. Vacio = ningun navegador
+      de otro origen. El comodin `*` se ignora a proposito: con cookies de
+      sesion nunca es correcto.
+- [ ] **Limites de recursos en el contenedor** (`mem_limit`, `cpus`). Los
+      timeouts del codigo acotan el tiempo, pero un archivo malformado puede
+      disparar la memoria durante el parseo y eso solo lo frena el runtime.
+- [ ] **Un solo worker**, o rate limiting externo. El limitador vive en
+      memoria del proceso: con N workers los limites efectivos se multiplican
+      por N. Para varios workers, ponlo en Redis o en el proxy.
+- [ ] **Copia de seguridad de `data/`**, que contiene indices, documentos
+      subidos e historiales.
+- [ ] **Revisa tus logs**: por defecto no guardan el texto de las preguntas
+      (`LOG_PREGUNTAS=false`). Si lo activas para depurar, estaras
+      almacenando datos de tus usuarios.
+
+Lo que ya viene hecho: rate limiting por sesion e IP con dos ventanas y
+`Retry-After`, tope de longitud de mensaje aplicado antes de gastar API,
+expiracion de sesiones inactivas, timeout en las llamadas al modelo, errores
+genericos con id de correlacion (el detalle solo va al log), handler global
+que evita tracebacks, validacion de archivos por contenido real y no por
+extension, nombres de archivo generados por el servidor, cabeceras de
+seguridad y log estructurado con el id de sesion hasheado.
+
+### Dos cosas que el codigo no puede resolver
+
+**Un usuario insistente puede extraer buena parte del corpus.** El bot esta
+diseñado para responder con el contenido de tus documentos: preguntando de
+forma sistematica se puede reconstruir una porcion importante de ellos. Los
+limites de peticiones lo hacen mas lento y mas caro, no imposible. **No
+pongas en `docs/` nada que no estarias dispuesto a publicar**, y si el
+corpus es sensible, pon autenticacion real de usuarios delante en vez de
+dejar `/sesiones` abierto.
+
+**Las conversaciones se envian a Google.** Cada pregunta, junto con los
+fragmentos recuperados de tus documentos, viaja a la API de Gemini. Eso tiene
+implicaciones de privacidad y, segun que datos manejes, tambien legales
+(RGPD si hay datos personales). Revisa las condiciones de uso de la API que
+tengas contratada, informa a tus usuarios de que sus mensajes se procesan en
+un tercero, y no metas datos personales o confidenciales en el corpus sin
+haber comprobado antes que puedes hacerlo.
 
 ## Estructura
 
@@ -133,7 +192,9 @@ Documentacion interactiva en `http://localhost:8000/docs`.
   sesion para la API) tras una interfaz comun.
 - `colecciones.py` - colecciones de la API: rutas, validacion de nombres y
   cache LRU de buscadores.
-- `api.py` - servidor FastAPI. Solo transporte HTTP.
+- `seguridad.py` - firma de sesiones, rate limiting, validacion real de
+  archivos subidos y log estructurado. Sin FastAPI, para poder probarlo suelto.
+- `api.py` - servidor FastAPI: transporte HTTP y control de acceso.
 - `evaluar.py` + `eval/` - set de evaluacion y metricas.
 - `ingest.py` - pre-generar el indice antes de desplegar. Con `--forzar` lo
   reconstruye entero.
@@ -141,7 +202,7 @@ Documentacion interactiva en `http://localhost:8000/docs`.
   desactiva solo dentro de un contenedor.
 - `rag_index/`, `data/`, `historial.json` - generados automaticamente, no se
   suben a git.
-- `test_*.py` - 176 tests. `python -m unittest discover`. No gastan API.
+- `test_*.py` - 232 tests. `python -m unittest discover`. No gastan API.
 
 ## Personalizacion avanzada
 

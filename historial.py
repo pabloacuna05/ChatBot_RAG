@@ -10,6 +10,7 @@ solo implica escribir otra subclase, sin tocar ni la CLI ni los endpoints.
 import json
 import sqlite3
 import threading
+import time
 from pathlib import Path
 
 
@@ -132,3 +133,106 @@ class HistorialSQLite(AlmacenHistorial):
                 "SELECT session_id, COUNT(*) FROM turnos GROUP BY session_id"
             ).fetchall()
         return [{"session_id": s, "turnos": n} for s, n in filas]
+
+
+class AlmacenSesiones:
+    """Metadatos de cada sesion: a que coleccion pertenece, cuando se creo,
+    cuando se vio por ultima vez y cuantos mensajes lleva.
+
+    Vive en la misma base que el historial para no tener dos archivos que
+    mantener sincronizados. Existe para tres cosas que el historial solo no
+    puede dar: ligar la sesion a UNA coleccion (y que no pueda cambiarla a
+    mitad), limitar cuantos mensajes admite, y caducar las inactivas.
+    """
+
+    def __init__(self, ruta):
+        self.ruta = Path(ruta)
+        self.ruta.parent.mkdir(parents=True, exist_ok=True)
+        self._local = threading.local()
+        self._crear_esquema()
+
+    def _conexion(self):
+        if not hasattr(self._local, "conexion"):
+            self._local.conexion = sqlite3.connect(str(self.ruta))
+            self._local.conexion.execute("PRAGMA journal_mode=WAL")
+        return self._local.conexion
+
+    def _crear_esquema(self):
+        with self._conexion() as conexion:
+            conexion.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sesiones (
+                    session_id  TEXT PRIMARY KEY,
+                    coleccion   TEXT NOT NULL,
+                    creada_en   REAL NOT NULL,
+                    vista_en    REAL NOT NULL,
+                    mensajes    INTEGER NOT NULL DEFAULT 0
+                )
+                """
+            )
+            conexion.execute(
+                "CREATE INDEX IF NOT EXISTS idx_sesiones_vista ON sesiones(vista_en)"
+            )
+
+    def crear(self, session_id, coleccion, ahora=None):
+        ahora = time.time() if ahora is None else ahora
+        with self._conexion() as conexion:
+            conexion.execute(
+                "INSERT INTO sesiones (session_id, coleccion, creada_en, vista_en) "
+                "VALUES (?, ?, ?, ?)",
+                (session_id, coleccion, ahora, ahora),
+            )
+        return {
+            "session_id": session_id,
+            "coleccion": coleccion,
+            "creada_en": ahora,
+            "vista_en": ahora,
+            "mensajes": 0,
+        }
+
+    def obtener(self, session_id):
+        with self._conexion() as conexion:
+            fila = conexion.execute(
+                "SELECT session_id, coleccion, creada_en, vista_en, mensajes "
+                "FROM sesiones WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        if not fila:
+            return None
+        return {
+            "session_id": fila[0],
+            "coleccion": fila[1],
+            "creada_en": fila[2],
+            "vista_en": fila[3],
+            "mensajes": fila[4],
+        }
+
+    def registrar_uso(self, session_id, ahora=None):
+        """Suma un mensaje y refresca la marca de actividad."""
+        ahora = time.time() if ahora is None else ahora
+        with self._conexion() as conexion:
+            conexion.execute(
+                "UPDATE sesiones SET mensajes = mensajes + 1, vista_en = ? "
+                "WHERE session_id = ?",
+                (ahora, session_id),
+            )
+
+    def borrar(self, session_id):
+        with self._conexion() as conexion:
+            conexion.execute("DELETE FROM sesiones WHERE session_id = ?", (session_id,))
+
+    def caducar(self, segundos_inactividad, ahora=None):
+        """Elimina las sesiones sin actividad reciente. Devuelve sus ids
+        para poder borrar tambien su historial."""
+        ahora = time.time() if ahora is None else ahora
+        limite = ahora - segundos_inactividad
+        with self._conexion() as conexion:
+            filas = conexion.execute(
+                "SELECT session_id FROM sesiones WHERE vista_en < ?", (limite,)
+            ).fetchall()
+            conexion.execute("DELETE FROM sesiones WHERE vista_en < ?", (limite,))
+        return [f[0] for f in filas]
+
+    def contar(self):
+        with self._conexion() as conexion:
+            return conexion.execute("SELECT COUNT(*) FROM sesiones").fetchone()[0]
